@@ -161,3 +161,90 @@ gmake clean; gmake
 - Check that opacity and EOS models are consistent
 - Verify units consistency between radiation and hydro (cgs vs code units)
 - For multigroup: ensure group structure captures relevant physics
+
+## Opacity Calculations
+
+The code uses a multigroup radiation transport approach where opacity calculations are central to radiation-matter coupling.
+
+### Multigroup Structure
+Each radiation group has:
+- `nugroup(g)`: Group center frequency
+- `xnu(g), xnu(g+1)`: Group boundary frequencies  
+- `dnugroup(g)`: Group frequency width
+
+### Planck Mean Opacity (κ_P)
+Used for emission and absorption:
+```
+κ_P = ∫ κ(ν)B(ν,T)dν / ∫ B(ν,T)dν
+```
+
+**Implementation in `ca_compute_emissivity`**:
+```fortran
+jg(i,j,g) = Bg * kap(i,j,g)  ! Emission coefficient
+```
+Where:
+- `jg`: Group emission coefficient
+- `Bg`: Integrated Planck function for group
+- `kap`: Group Planck mean opacity
+
+**Planck Function Integration Methods**:
+1. **Exact integration** (`integrate_Planck = 1`):
+   ```fortran
+   call BdBdTIndefInteg(T, xnu(g), B0, dBdT0)
+   call BdBdTIndefInteg(T, xnu(g+1), B1, dBdT1)
+   Bg = B1 - B0  ! Integrated B for group g
+   ```
+
+2. **Group center evaluation** (default):
+   ```fortran
+   nu = nugroup(g)
+   Bg = 8π*h/c³ * nu³/(exp(hν/kT) - 1) * dnu
+   ```
+
+3. **Gray radiation** (`ngroups = 1`):
+   ```fortran
+   Bg = arad * T⁴  ! Stefan-Boltzmann
+   ```
+
+### Rosseland Mean Opacity (κ_R)
+Used for radiation diffusion:
+```
+1/κ_R = ∫ (1/κ(ν)) ∂B/∂T dν / ∫ ∂B/∂T dν
+```
+- Stored as `kpr(i,j,g)` for each group
+- Used in flux limiter calculations
+- Harmonic mean suitable for diffusion
+
+### Opacity Models
+
+**Simple Power Law** (`powerlaw-example/`):
+```fortran
+kp = const_kappa_p * ρ^m * T^(-n) * ν^p
+kr = const_kappa_r * ρ^m * T^(-n) * ν^p
+```
+
+**Thomson Scattering** (`breakout/`):
+```fortran
+kp = ρYe * 0.4 * fac  ! Planck mean
+kr = ρYe * 0.4        ! Rosseland mean (cm²/g)
+```
+
+### Key Implementation Files
+- `Source/Src_Nd/MGFLD_Nd.f90`: Multigroup opacity calculations
+- `Source/blackbody.f90`: Planck function integration
+- `Opacity/*/opacity_table_module.f90`: Opacity model implementations
+- `Source/Src_Nd/ca_opacs`: Calls to opacity modules
+
+### Temperature Derivatives
+For implicit solver stability:
+```fortran
+call get_opacities(kp1, kr1, ρ, T-dT, Ye, ν, ...)
+call get_opacities(kp2, kr2, ρ, T+dT, Ye, ν, ...)
+dkdT(i,j,g) = (kp2 - kp1)/(2*dT)
+```
+
+### Practical Notes
+- Each group calls `get_opacities` with its representative frequency
+- Emission uses Kirchhoff's law: `jg = κ_P * B`
+- Opacity modules can be swapped via `Opacity_dir` in GNUmakefile
+- For debugging: set `radiation.plot_kappa_r = 1` to output opacities
