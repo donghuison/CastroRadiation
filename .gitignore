@@ -15,3 +15,5 @@ buildInfo.cpp
 Exec/*/d/
 Exec/*/f/
 Exec/*/o/
+
+*.mod
